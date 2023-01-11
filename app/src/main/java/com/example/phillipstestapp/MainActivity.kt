@@ -62,11 +62,7 @@ class MainActivity : AppCompatActivity() {
         connectButton.setOnClickListener {
             lifecycleScope.launch {
                 try {
-                    if (Patterns.IP_ADDRESS.matcher(ipAddressEditText.text).matches()) {
-                        viewModel.connect(ipAddress = ipAddressEditText.text.toString())
-                    } else {
-                        showMessage("Invalid IP address")
-                    }
+                    viewModel.connect()
                 } catch (e: java.lang.AssertionError) {
                     showMessage("IP Address is empty")
                 }
@@ -76,10 +72,10 @@ class MainActivity : AppCompatActivity() {
         send.setOnClickListener {
             lifecycleScope.launch(Dispatchers.IO) {
                 val bytesWithCheckSum =
-                    viewModel.getData(byteArrayOf(0x07, 0x01, 0x00, 0x44, 0xA, 0xA))
+                    viewModel.getDataWithChecksum(byteArrayOf(0x07, 0x01, 0x00, 0x44, 0xA, 0xA))
                 Log.e(TAG, "onClick:send: $bytesWithCheckSum")
                 viewModel.write(bytesWithCheckSum)
-                viewModel.read()
+               // viewModel.read()
             }
         }
     }

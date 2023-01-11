@@ -9,64 +9,65 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.net.InetSocketAddress
+import java.net.InetAddress
 import java.net.Socket
+import java.net.SocketException
 import kotlin.experimental.xor
 
 class MainActivityViewModel : ViewModel() {
 
-    private var socket: Socket = Socket()
+    private lateinit var socket: Socket
+    private var ip: String? = null
 
     sealed interface SocketConnectionState {
         object Initial : SocketConnectionState
-        object Connected :SocketConnectionState
-        object Disconnected  :SocketConnectionState
-        class Error (val message:String) :SocketConnectionState
+        object Connected : SocketConnectionState
+        object Disconnected : SocketConnectionState
+        class Error(val message: String) : SocketConnectionState
     }
 
 
-    init {
-        socket.keepAlive =  true
-    }
 
-    private val _connectionStateFlow = MutableStateFlow<SocketConnectionState>(SocketConnectionState.Initial)
-    val connectionStateFlow =  _connectionStateFlow.asStateFlow()
+    private val _connectionStateFlow =
+        MutableStateFlow<SocketConnectionState>(SocketConnectionState.Initial)
+    val connectionStateFlow = _connectionStateFlow.asStateFlow()
 
-    private fun setConnectionFlowState (state: SocketConnectionState) {
+    private fun setConnectionFlowState(state: SocketConnectionState) {
         viewModelScope.launch {
             _connectionStateFlow.emit(state)
         }
     }
 
 
-    suspend fun connect(ipAddress: String): Boolean {
-        return withContext(Dispatchers.IO) {
-            assert(ipAddress.isNotEmpty())
-            try {
-                socket.connect(InetSocketAddress(ipAddress, 5555), 2)
-            } catch (e : java.lang.Exception) {
-                setConnectionFlowState(SocketConnectionState.Error(e.message ?: ""))
-            }
-            socket.onConnectionChangeListener{ connected ->
-                if (connected) {
-                    Log.e(TAG, "connect: socket connected", )
-                    setConnectionFlowState(SocketConnectionState.Connected)
-                } else {
-                    Log.e(TAG, "connect: socket disconnected", )
-                    setConnectionFlowState(SocketConnectionState.Disconnected)
-                }
-            }
+    suspend fun connect(): Boolean {
+            return withContext(Dispatchers.IO) {
+                try {
+                    socket = Socket(InetAddress.getLoopbackAddress(), 5555)
+                    Log.e(TAG, "connect: socket connected at ${socket.localSocketAddress}", )
+                    socket.keepAlive = true
+                    if (socket.isConnected) {
+                        Log.e(TAG, "connect: socket connected")
+                        setConnectionFlowState(SocketConnectionState.Connected)
+                    } else {
+                        Log.e(TAG, "connect: socket disconnected")
+                        setConnectionFlowState(SocketConnectionState.Disconnected)
+                    }
 
-            socket.isConnected
+                    return@withContext socket.isConnected
+                } catch (e: java.lang.Exception) {
+                    setConnectionFlowState(SocketConnectionState.Error(e.message ?: ""))
+                    tryConnect()
+                }
+                return@withContext false
+
         }
     }
 
 
+    private suspend fun checkIfSocketIsConnected() =
+        withContext(Dispatchers.IO) { socket.isConnected }
 
-
-    private suspend fun checkIfSocketIsConnected() = withContext(Dispatchers.IO){ socket?.isConnected}
-
-    fun getData(byteArray: ByteArray): ByteArray {
+    fun getDataWithChecksum(byteArray: ByteArray): ByteArray {
         return writeCheckSum(input = byteArray)
     }
 
@@ -78,25 +79,44 @@ class MainActivityViewModel : ViewModel() {
             checksum = checksum.xor(b)
             byteList.add(b)
         }
+        byteList.add(checksum)
         return byteList.toByteArray()
     }
 
     suspend fun write(bytesWithCheckSum: ByteArray) {
         withContext(Dispatchers.IO) {
-            if (checkIfSocketIsConnected() == true) {
-                socket.getOutputStream()?.write(bytesWithCheckSum)
+            try {
+                if (checkIfSocketIsConnected()) {
+                        socket.getOutputStream().write(bytesWithCheckSum)
+                } else {
+                    Log.e(TAG, "write: socket not connected")
+                }
+            } catch (e: SocketException) {
+                Log.e(TAG, "write: ", e)
+                setConnectionFlowState(SocketConnectionState.Error(e.message ?: ""))
+                tryConnect()
+            }
+        }
+    }
+
+    private fun tryConnect() {
+        if (this::socket.isInitialized) {
+            socket.close()
+            socket = Socket(InetAddress.getLocalHost(), 5555)
+            viewModelScope.launch {
+                connect()
             }
         }
     }
 
 
-    suspend fun read() {
-        withContext(Dispatchers.IO) {
-            socket.getInputStream()?.use {
-                it.bufferedReader().readLine()
-            }
-        }
-    }
+//    suspend fun read() {
+//        withContext(Dispatchers.IO) {
+//            if (socket.isConnected && socket.isClosed.not()) socket.getInputStream()?.use {
+//                it.bufferedReader().readLine()
+//            }
+//        }
+//    }
 
     override fun onCleared() {
         viewModelScope.launch(Dispatchers.IO) { socket.close() }
@@ -108,15 +128,4 @@ class MainActivityViewModel : ViewModel() {
         private const val TAG = "MainActivityViewModel"
     }
 
-}
-
-private suspend fun Socket.onConnectionChangeListener(onConnectionStatusChanged:(connected:Boolean)->Unit) {
-    var state: Boolean
-    while (true) {
-        state  = isConnected
-        delay(1000)
-        if (isConnected != state) {
-            onConnectionStatusChanged(isConnected)
-        }
-    }
 }
