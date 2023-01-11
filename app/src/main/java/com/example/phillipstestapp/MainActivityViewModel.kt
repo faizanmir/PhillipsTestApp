@@ -4,20 +4,20 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.net.InetAddress
+import java.net.NetworkInterface
 import java.net.Socket
 import java.net.SocketException
+import java.util.*
 import kotlin.experimental.xor
 
 class MainActivityViewModel : ViewModel() {
 
     private lateinit var socket: Socket
-    private var ip: String? = null
 
     sealed interface SocketConnectionState {
         object Initial : SocketConnectionState
@@ -25,7 +25,6 @@ class MainActivityViewModel : ViewModel() {
         object Disconnected : SocketConnectionState
         class Error(val message: String) : SocketConnectionState
     }
-
 
 
     private val _connectionStateFlow =
@@ -40,32 +39,32 @@ class MainActivityViewModel : ViewModel() {
 
 
     suspend fun connect(): Boolean {
-            return withContext(Dispatchers.IO) {
-                try {
-                    socket = Socket(InetAddress.getLoopbackAddress(), 5555)
-                    Log.e(TAG, "connect: socket connected at ${socket.localSocketAddress}", )
-                    socket.keepAlive = true
-                    if (socket.isConnected) {
-                        Log.e(TAG, "connect: socket connected")
-                        setConnectionFlowState(SocketConnectionState.Connected)
-                    } else {
-                        Log.e(TAG, "connect: socket disconnected")
-                        setConnectionFlowState(SocketConnectionState.Disconnected)
-                    }
-
-                    return@withContext socket.isConnected
-                } catch (e: java.lang.Exception) {
-                    setConnectionFlowState(SocketConnectionState.Error(e.message ?: ""))
-                    tryConnect()
+        return withContext(Dispatchers.IO) {
+            try {
+                socket = getSocket()
+                Log.e(TAG, "connect: socket connected at ${socket.localSocketAddress}")
+                socket.keepAlive = true
+                if (socket.isConnected) {
+                    Log.e(TAG, "connect: socket connected")
+                    setConnectionFlowState(SocketConnectionState.Connected)
+                } else {
+                    Log.e(TAG, "connect: socket disconnected")
+                    setConnectionFlowState(SocketConnectionState.Disconnected)
                 }
-                return@withContext false
+
+                return@withContext socket.isConnected
+            } catch (e: java.lang.Exception) {
+                setConnectionFlowState(SocketConnectionState.Error(e.message ?: ""))
+                tryConnect()
+            }
+            return@withContext false
 
         }
     }
 
 
-    private suspend fun checkIfSocketIsConnected() =
-        withContext(Dispatchers.IO) { socket.isConnected }
+    private suspend fun checkIfSocketIsConnectedAndInitialized() =
+        withContext(Dispatchers.IO) { this@MainActivityViewModel::socket.isInitialized && socket.isConnected }
 
     fun getDataWithChecksum(byteArray: ByteArray): ByteArray {
         return writeCheckSum(input = byteArray)
@@ -86,8 +85,8 @@ class MainActivityViewModel : ViewModel() {
     suspend fun write(bytesWithCheckSum: ByteArray) {
         withContext(Dispatchers.IO) {
             try {
-                if (checkIfSocketIsConnected()) {
-                        socket.getOutputStream().write(bytesWithCheckSum)
+                if (checkIfSocketIsConnectedAndInitialized()) {
+                    socket.getOutputStream().write(bytesWithCheckSum)
                 } else {
                     Log.e(TAG, "write: socket not connected")
                 }
@@ -99,14 +98,48 @@ class MainActivityViewModel : ViewModel() {
         }
     }
 
+    private fun getSocket() = Socket(getIPAddress(true), 5555)
+
     private fun tryConnect() {
         if (this::socket.isInitialized) {
             socket.close()
-            socket = Socket(InetAddress.getLocalHost(), 5555)
+            socket = getSocket()
             viewModelScope.launch {
                 connect()
             }
         }
+    }
+
+    private fun getIPAddress(useIPv4: Boolean): String? {
+        try {
+            val interfaces: List<NetworkInterface> =
+                Collections.list(NetworkInterface.getNetworkInterfaces())
+            for (intf in interfaces) {
+                val addrs: List<InetAddress> = Collections.list(intf.inetAddresses)
+                for (addr in addrs) {
+                    if (!addr.isLoopbackAddress) {
+                        val sAddr = addr.hostAddress
+                        //boolean isIPv4 = InetAddressUtils.isIPv4Address(sAddr);
+                        val isIPv4 = sAddr.indexOf(':') < 0
+                        if (useIPv4) {
+                            if (isIPv4) return sAddr
+                        } else {
+                            if (!isIPv4) {
+                                val delim = sAddr.indexOf('%') // drop ip6 zone suffix
+                                return if (delim < 0) sAddr.uppercase(Locale.getDefault()) else sAddr.substring(
+                                    0,
+                                    delim
+                                ).uppercase(
+                                    Locale.getDefault()
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (ignored: Exception) {
+        } // for now eat exceptions
+        return ""
     }
 
 
