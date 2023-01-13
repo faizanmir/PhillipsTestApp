@@ -17,7 +17,7 @@ import kotlin.experimental.xor
 
 class MainActivityViewModel : ViewModel() {
 
-    private lateinit var socket: Socket
+    private var socket: Socket? =  null
 
     sealed interface SocketConnectionState {
         object Initial : SocketConnectionState
@@ -41,10 +41,16 @@ class MainActivityViewModel : ViewModel() {
     suspend fun connect(): Boolean {
         return withContext(Dispatchers.IO) {
             try {
+                if (socket?.isConnected == true){
+                    socket?.close()
+                    socket = null
+                }
+
                 socket = getSocket()
-                Log.e(TAG, "connect: socket connected at ${socket.localSocketAddress}")
-                socket.keepAlive = true
-                if (socket.isConnected) {
+
+                Log.e(TAG, "connect: socket connected at ${socket?.localSocketAddress}")
+                socket?.keepAlive = true
+                if (socket?.isConnected == true) {
                     Log.e(TAG, "connect: socket connected")
                     setConnectionFlowState(SocketConnectionState.Connected)
                 } else {
@@ -52,7 +58,7 @@ class MainActivityViewModel : ViewModel() {
                     setConnectionFlowState(SocketConnectionState.Disconnected)
                 }
 
-                return@withContext socket.isConnected
+                return@withContext socket?.isConnected == true
             } catch (e: java.lang.Exception) {
                 setConnectionFlowState(SocketConnectionState.Error(e.message ?: ""))
                 tryConnect()
@@ -64,7 +70,7 @@ class MainActivityViewModel : ViewModel() {
 
 
     private suspend fun checkIfSocketIsConnectedAndInitialized() =
-        withContext(Dispatchers.IO) { this@MainActivityViewModel::socket.isInitialized && socket.isConnected }
+        withContext(Dispatchers.IO) {  socket?.isConnected == true }
 
     fun getDataWithChecksum(byteArray: ByteArray): ByteArray {
         return writeCheckSum(input = byteArray)
@@ -86,7 +92,7 @@ class MainActivityViewModel : ViewModel() {
         withContext(Dispatchers.IO) {
             try {
                 if (checkIfSocketIsConnectedAndInitialized()) {
-                    socket.getOutputStream().write(bytesWithCheckSum)
+                    socket?.getOutputStream()?.write(bytesWithCheckSum)
                 } else {
                     Log.e(TAG, "write: socket not connected")
                 }
@@ -98,16 +104,14 @@ class MainActivityViewModel : ViewModel() {
         }
     }
 
-    private fun getSocket() = Socket(getIPAddress(true), 5555)
+    private fun getSocket() = Socket(getIPAddress(true), 5000)
 
     private fun tryConnect() {
-        if (this::socket.isInitialized) {
-            socket.close()
+            socket?.close()
             socket = getSocket()
             viewModelScope.launch {
                 connect()
             }
-        }
     }
 
     private fun getIPAddress(useIPv4: Boolean): String? {
@@ -120,12 +124,12 @@ class MainActivityViewModel : ViewModel() {
                     if (!addr.isLoopbackAddress) {
                         val sAddr = addr.hostAddress
                         //boolean isIPv4 = InetAddressUtils.isIPv4Address(sAddr);
-                        val isIPv4 = sAddr.indexOf(':') < 0
+                        val isIPv4 = (sAddr?.indexOf(':') ?: 0) < 0
                         if (useIPv4) {
                             if (isIPv4) return sAddr
                         } else {
                             if (!isIPv4) {
-                                val delim = sAddr.indexOf('%') // drop ip6 zone suffix
+                                val delim = sAddr.indexOf('%') ?: 0 // drop ip6 zone suffix
                                 return if (delim < 0) sAddr.uppercase(Locale.getDefault()) else sAddr.substring(
                                     0,
                                     delim
@@ -152,7 +156,7 @@ class MainActivityViewModel : ViewModel() {
 //    }
 
     override fun onCleared() {
-        viewModelScope.launch(Dispatchers.IO) { socket.close() }
+        viewModelScope.launch(Dispatchers.IO) { socket?.close() }
         super.onCleared()
     }
 

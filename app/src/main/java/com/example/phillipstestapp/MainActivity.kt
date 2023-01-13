@@ -62,7 +62,7 @@ class MainActivity : AppCompatActivity() {
         connectButton.setOnClickListener {
             lifecycleScope.launch {
                 try {
-                    viewModel.connect()
+
                 } catch (e: java.lang.AssertionError) {
                     showMessage("IP Address is empty")
                 }
@@ -71,8 +71,9 @@ class MainActivity : AppCompatActivity() {
 
         send.setOnClickListener {
             lifecycleScope.launch(Dispatchers.IO) {
+                viewModel.connect()
                 val bytesWithCheckSum =
-                    viewModel.getDataWithChecksum(byteArrayOf(0x07, 0x01, 0x00, 0x44, 0xA, 0xA))
+                    viewModel.getDataWithChecksum(byteArrayOf(0x07, 0x01, 0x00, 0x44, 0x32, 0x32))
                 Log.e(TAG, "onClick:send: $bytesWithCheckSum")
                 viewModel.write(bytesWithCheckSum)
                // viewModel.read()
